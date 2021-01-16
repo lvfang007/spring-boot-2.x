@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: springboot_lvfang
+  profiles:
+    active: dev
+
+server:
+  port: 80
+  servlet:
+    context-path: /
+  tomcat:
+#    accesslog:
+#          buffered: true
+#          directory: C:/logs
+#          enabled: true
+#          file-date-format: .yyyy-MM-dd
+#          pattern: common
+#          prefix: access_log
+#          rename-on-rotate: false
+#          request-attributes-enabled: false
+#          rotate: true
+#          suffix: .log
+    accept-count: 2000
+    max-connections: 5000
+    max-threads: 2000
+    min-spare-threads: 100
+    max-http-post-size: 2
+    max-swallow-size: 2
+
+## 记录日志
+logging:
+#  config: classpath:logback/logback-spring.xml
+## Start logging
+  level:
+    root: info
+
+# spring actuator 监控
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+        exclude: env,beans
+
+
+

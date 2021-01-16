@@ -1,0 +1,90 @@
+
+附件：关于SPI的文章 https://www.cnblogs.com/oskyhg/p/10800051.html
+
+重点：
+	1、SpringFactoriesLoader是springboot提供的一个SPI工具，用来加载读取springboot下/META-INF/spring.factories文件
+	2、getSpringFactoriesInstances是通过读取META-INF/spring.factories中的类获取具体实例
+	3、springboot启动三个脉络new SpringApplication、run方法调用以及refreshContext()容器启动
+	4、ApplicationContextInitializer和ApplicationListener的作用
+		SpringApplicationRunListener 接口的作用主要就是在Spring Boot 启动初始化的过程中可以通过SpringApplicationRunListener接口回调来让用户在启动的各个流程中可以加入自己的逻辑。
+            六个时机 1：starting()在run()方法开始执行时，该方法就立即被调用，可用于在初始化最早期时做一些工作
+                     2：environmentPrepared() 当environment构建完成，ApplicationContext创建之前，该方法被调用
+                     3：contextPrepared() 当ApplicationContext构建完成时，该方法被调用
+                     4：contextLoaded() 在ApplicationContext完成加载，但没有被刷新前，该方法被调用
+                     5：started() 在ApplicationContext刷新并启动后，CommandLineRunners和ApplicationRunner未被调用前，该方法被调用
+                     6：running() 在run()方法执行完成前该方法被调用
+                     7: failed() 当应用运行出错时该方法被调用
+
+	5、自动装配的时机（refresh阶段）以及重要注解脉络
+	6、springboot配置解析关注Environment和PropertyResolver即可，后者提供属性访问功能，前者继承自后者，提供访问属性和判断Profiles能力。PropertySource是k-v的封装实体
+		原理：从文件中读取数据转化为key-value结构，key-value结构存放在一个PropertySource实例中，然后得到的多个PropertySource实例存放在一个CopyOnWriteArrayList中，属性访问的时候总是遍历CopyOnWriteArrayList中的PropertySource进行匹配
+
+1、springboot启动（核心启动类：SpringApplication）
+
+	new SpringApplication.run(Application.class, args);
+		1、new SpringApplication
+			WebApplicationType.deduceFromClasspath();//推断环境类型，默认servlet
+			setInitializers()//初始化classpath下 META-INF/spring.factories中已配置的ApplicationContextInitializer
+			setListeners()//初始化classpath下META-INF/spring.factories中已配置的 ApplicationListener
+			deduceMainApplicationClass();//推断主类
+			
+		2、SpringApplication.run
+			getSpringFactoriesInstances()获取xxxxInitializer & xxxxListener
+			getRunListeners(args).starting() 获取SpringApplicationRunListeners并启动，其实就是调用其starting方法
+			prepareEnvironment(listeners, applicationArguments);//解析封装配置文件到environment对象中，其中在propertySources的propertySourcesList属性中包装着配置文件内
+			createApplicationContext();//创建上下文对象ConfigurableApplicationContext
+			prepareContext(context);//1、设置Environment环境 2、postProcess后置注册处理3、加载source下所有的BeanDefinition、处理listeners时间
+			refreshContext(context);//调用refresh方法，启动容器。这是一个钩子方法，最终调用的是ServletWebServerApplicationContext的onRefresh方法
+				1、先进行自动装配处理
+				2、启动并阻塞Tomcat
+				ServletWebServerApplicationContext.onRefresh()
+					createWebServer();//创建webserver，默认是Tomcatserver
+						getTomcatWebServer(tomcat);//启动并阻塞Tomcat
+							tomcat.start();
+							startDaemonAwaitThread();
+			callRunners(context, applicationArguments);//执行所有CommandLineRunner接口的实现了				
+			listeners.started(context);//执行容器中listeners的started方法
+			listeners.running(context);//执行容器中listeners的running方法
+		
+	SpringApplicationRunListener 接口的作用主要就是在Spring Boot 启动初始化的过程中可以通过SpringApplicationRunListener接口回调来让用户在启动的各个流程中可以加入自己的逻辑。
+
+
+@springbootApplication->@EnableAutoConfiguration->AutoConfigurationImportSelector->selectImports()
+
+2、springboot自动装配(核心注解：@SpringBootApplication)  -->自动装配源于习惯优于配置（约束大于配置）理念
+		## 首先、自动装配的时机是在refresh阶段（先自动装配，在bean实例化，新建Tomcat容器并阻塞）
+		## 其次、springboot自动装配的依赖便是spring-boot-autoconfigure.jar。确切的说就是依赖于注解@EnableAutoConfiguration
+		@springbootApplication是spring项目启动必不可少的注解，他是一个复合注解，可以看到主要由@componentScan、@SpringbootConfiguration还有@EnableAutoConfiguration组成
+			@componentScan：包扫描的支撑
+			@SpringbootConfiguration：配置注解，替换XML
+			@EnableAutoConfiguration：自动装配支撑
+		1、自动装配的支撑	
+			@EnableAutoConfiguration：他是一个复合注解，其中的关键功能由@Import提供，其导入的AutoConfigurationImportSelector支撑
+			AutoConfigurationImportSelector追根溯源是ImportSelector类型，所以在加载启动时会执行selectImports()方法，而方法selectImports正是自动装配的诀窍所在
+			selectImports()方法通过SpringFactoriesLoader.loadFactoryNames()扫描所有具有META-INF/spring.factories的jar包中的spring.factories文件，这个文件是一组k-v结构
+			k是EnableAutoConfiguration类的全类名，而它的value是一个xxxxAutoConfiguration的类名的列表。这个@EnableAutoConfiguration注解通过@SpringBootApplication被间接的
+			标记在了Spring Boot的启动类上。在SpringApplication.run(...)的内部就会执行selectImports()方法，找到所有JavaConfig自动配置类的全限定名对应的class，然后将所有
+			自动配置类加载到Spring容器中。
+		2、自动装配的生效
+			springboot提供了@ConditionalOnXXXX系列的条件注解为自动装配的生效做支撑，我们可以看每个@XxxxAutoConfiguration注解发现规律，
+			我们可以看到，在每个（XxxAutoConfiguration）均有一个@Configuration注解，这一点毋庸置疑，表示一个配置，等价于XML配置。
+						 在每个（XxxAutoConfiguration）均有一系列@ConditionalOn注解，这是对注解条件的配置，反过来说，就是当满足某种条件才会被生效，而怎么生效就要看具体的@ConditionalOn注解了
+						 在每个（XxxAutoConfiguration）均有一个@EnableConfigurationProperties(XxxProperties.class),@EnableConfigurationProperties注解：开启配置属性，而它后面的参数是一个ServerProperties类，这就是习惯优于配置的最终落地点。
+			诸多的XxxxAutoConfiguration自动配置类，就是Spring容器的JavaConfig形式，作用就是为Spring容器导入bean，而所有导入的bean所需要的属性都通过xxxxProperties的bean来获得。
+		3、最后的总结
+			Spring Boot启动的时候会通过@EnableAutoConfiguration注解找到META-INF/spring.factories配置文件中的所有自动配置类，并对其进行加载，而这些自动配置类基本都是以AutoConfiguration结尾来命名的，它实际
+			上就是一个JavaConfig形式的Spring容器配置类，它能通过以Properties结尾命名的类中取得在全局配置文件中配置的属性如：server.port，而XxxxProperties类是通过@ConfigurationProperties注解与全局配置
+			文件中对应的属性进行绑定的。
+			
+		两篇博文：https://blog.csdn.net/u014745069/article/details/83820511    http://www.51gjie.com/javaweb/1046.html
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
+			
